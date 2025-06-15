@@ -1,0 +1,69 @@
+name: iOS CI/CD
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+
+env:
+  DEVELOPER_DIR: /Applications/Xcode_14.3.app/Contents/Developer
+
+jobs:
+  test:
+    name: Test and Build
+    runs-on: macos-13
+    
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Required for SonarCloud
+    
+    - name: Setup Xcode
+      uses: maxim-lobanov/setup-xcode@v1
+      with:
+        xcode-version: '14.3'
+    
+    - name: Cache CocoaPods
+      uses: actions/cache@v3
+      with:
+        path: Pods
+        key: ${{ runner.os }}-pods-${{ hashFiles('**/Podfile.lock') }}
+        restore-keys: |
+          ${{ runner.os }}-pods-
+    
+    - name: Install Dependencies
+      run: |
+        if [ -f "Podfile" ]; then
+          pod install
+        fi
+    
+    - name: Run Tests
+      run: |
+        xcodebuild test \
+          -workspace ExpenseMate.xcworkspace \
+          -scheme ExpenseMate \
+          -destination 'platform=iOS Simulator,name=iPhone 14,OS=16.4' \
+          -enableCodeCoverage YES \
+          -derivedDataPath DerivedData
+    
+    - name: Generate Code Coverage
+      run: |
+        xcrun xccov view --report --json DerivedData/Logs/Test/*.xccovarchive > coverage.json
+        bash <(curl -s https://codecov.io/bash)
+    
+    - name: SonarCloud Scan
+      uses: SonarSource/sonarcloud-github-action@master
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+    
+    - name: Build for Release
+      if: github.ref == 'refs/heads/main'
+      run: |
+        xcodebuild archive \
+          -workspace ExpenseMate.xcworkspace \
+          -scheme ExpenseMate \
+          -destination 'generic/platform=iOS' \
+          -archivePath ExpenseMate.xcarchive
